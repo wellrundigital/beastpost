@@ -3,7 +3,7 @@
 Plugin Name: BeastPost
 Description: Uses OpenAI and Pexels APIs to create a blog post from a subject input.
 Version: 1.0
-Author: Your Name
+Author: Wellrundigital
 */
 
 if ( ! defined( 'ABSPATH' ) ) {
