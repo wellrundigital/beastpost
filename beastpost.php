@@ -1,9 +1,9 @@
 <?php
 /*
 Plugin Name: BeastPost
-Description: Uses OpenAI and Pexels APIs to create a blog post from a subject input.
-Version: 1.0
-Author: Wellrundigital
+Description: Uses OpenAI and Pexels APIs to generate a blog post from a subject input. Also provides a settings page for updating API keys.
+Version: 1.2
+Author: Wellrundigital | wellrundigital.com
 */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -13,26 +13,30 @@ if ( ! defined( 'ABSPATH' ) ) {
 class BeastPostPlugin {
 
     public function __construct() {
-        // Add meta box to post/page editor
+        // Add meta box to post/page editor.
         add_action('add_meta_boxes', array($this, 'add_beastpost_meta_box'));
 
-        // Enqueue admin scripts
+        // Enqueue admin scripts.
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
 
         // AJAX handlers for updating API keys and creating the post.
         add_action('wp_ajax_beastpost_update_key', array($this, 'ajax_update_key'));
         add_action('wp_ajax_beastpost_create_post', array($this, 'ajax_create_post'));
+
+        // Add settings page and register settings.
+        add_action('admin_menu', array($this, 'register_settings_page'));
+        add_action('admin_init', array($this, 'register_settings'));
     }
 
     // Add the BeastPost meta box to the sidebar.
     public function add_beastpost_meta_box() {
         add_meta_box(
-            'beastpost_metabox',          // ID
-            'BeastPost',                  // Title
-            array($this, 'render_meta_box'), // Callback
-            null,                         // Screen (all post types)
-            'side',                       // Context
-            'high'                        // Priority
+            'beastpost_metabox',          // ID.
+            'BeastPost',                  // Title.
+            array($this, 'render_meta_box'), // Callback.
+            null,                         // Screen (all post types).
+            'side',                       // Context.
+            'high'                        // Priority.
         );
     }
 
@@ -44,27 +48,23 @@ class BeastPostPlugin {
         ?>
         <div id="beastpost-container">
             <p>
-                <!-- OpenAI API key indicator -->
+                <!-- OpenAI API key indicator with pencil icon -->
                 <span style="display:inline-block; padding:5px; border-radius:3px; background-color:<?php echo ($openai_key ? '#4CAF50' : '#F44336'); ?>; color:#fff;">
                     <?php echo ($openai_key ? 'OpenAI API key set' : 'OpenAI API key missing'); ?>
                 </span>
-                <?php if( ! $openai_key ): ?>
-                    <a href="#" id="beastpost-openai-link" style="margin-left:10px;">Set key</a>
-                <?php endif; ?>
+                <a href="#" class="beastpost-edit-key" data-key-type="openai" title="Edit API key" style="margin-left:5px;">&#9998;</a>
             </p>
             <p>
-                <!-- Pexels API key indicator -->
+                <!-- Pexels API key indicator with pencil icon -->
                 <span style="display:inline-block; padding:5px; border-radius:3px; background-color:<?php echo ($pexels_key ? '#4CAF50' : '#F44336'); ?>; color:#fff;">
                     <?php echo ($pexels_key ? 'Pexels API key set' : 'Pexels API key missing'); ?>
                 </span>
-                <?php if( ! $pexels_key ): ?>
-                    <a href="#" id="beastpost-pexels-link" style="margin-left:10px;">Set key</a>
-                <?php endif; ?>
+                <a href="#" class="beastpost-edit-key" data-key-type="pexels" title="Edit API key" style="margin-left:5px;">&#9998;</a>
             </p>
             <p>
-                <!-- Main input field for subject -->
+                <!-- Main multi-row input field for subject -->
                 <label for="beastpost-input">Article Subject:</label><br>
-                <input type="text" id="beastpost-input" style="width:100%;" placeholder="What is your article about?" />
+                <textarea id="beastpost-input" style="width:100%;" rows="5" placeholder="What is your article about?"></textarea>
             </p>
             <p>
                 <!-- Create Post button -->
@@ -81,7 +81,7 @@ class BeastPostPlugin {
                 'beastpost_script',
                 plugins_url('beastpost.js', __FILE__),
                 array('jquery'),
-                '1.0',
+                '1.2',
                 true
             );
             wp_localize_script('beastpost_script', 'beastpost', array(
@@ -113,7 +113,7 @@ class BeastPostPlugin {
         check_ajax_referer('beastpost_nonce', 'nonce');
 
         $post_id = intval($_POST['post_id']);
-        $subject = sanitize_text_field($_POST['subject']);
+        $subject = sanitize_textarea_field($_POST['subject']);
 
         // Retrieve saved API keys.
         $openai_key = get_option('beastpost_openai_key');
@@ -140,7 +140,7 @@ class BeastPostPlugin {
         ));
 
         if ( is_wp_error($openai_response) ) {
-            wp_send_json_error('Error contacting OpenAI API.');
+            wp_send_json_error('Error contacting OpenAI API: ' . $openai_response->get_error_message());
         }
 
         $openai_body = json_decode(wp_remote_retrieve_body($openai_response), true);
@@ -152,7 +152,7 @@ class BeastPostPlugin {
         // Assume the response is a JSON object.
         $response_data = json_decode($openai_text, true);
         if ( ! $response_data || !isset($response_data['content'], $response_data['seo_link'], $response_data['image_description']) ) {
-            wp_send_json_error('Response format error.');
+            wp_send_json_error('Response format error. Full response: ' . print_r($openai_body, true));
         }
 
         $content           = $response_data['content'];
@@ -174,7 +174,7 @@ class BeastPostPlugin {
         ));
 
         if ( is_wp_error($pexels_response) ) {
-            wp_send_json_error('Error contacting Pexels API.');
+            wp_send_json_error('Error contacting Pexels API: ' . $pexels_response->get_error_message());
         }
 
         $pexels_body = json_decode(wp_remote_retrieve_body($pexels_response), true);
@@ -193,7 +193,7 @@ class BeastPostPlugin {
         // Download the image and attach it to the post.
         $featured_image_id = media_sideload_image($image_url, $post_id, null, 'id');
         if ( is_wp_error($featured_image_id) ) {
-            wp_send_json_error('Error setting featured image.');
+            wp_send_json_error('Error setting featured image: ' . $featured_image_id->get_error_message());
         }
         set_post_thumbnail($post_id, $featured_image_id);
 
@@ -201,6 +201,49 @@ class BeastPostPlugin {
             'message'  => 'Post created successfully.',
             'seo_link' => $seo_link
         ));
+    }
+
+    // Register the plugin settings page.
+    public function register_settings_page() {
+        add_options_page(
+            'BeastPost Settings',
+            'BeastPost',
+            'manage_options',
+            'beastpost-settings',
+            array($this, 'render_settings_page')
+        );
+    }
+
+    // Render the settings page.
+    public function render_settings_page() {
+        ?>
+        <div class="wrap">
+            <h1>BeastPost Settings</h1>
+            <form method="post" action="options.php">
+                <?php
+                settings_fields('beastpost_settings_group');
+                do_settings_sections('beastpost-settings');
+                ?>
+                <table class="form-table">
+                    <tr valign="top">
+                        <th scope="row">OpenAI API Key</th>
+                        <td><input type="text" name="beastpost_openai_key" value="<?php echo esc_attr(get_option('beastpost_openai_key')); ?>" style="width:300px;" /></td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">Pexels API Key</th>
+                        <td><input type="text" name="beastpost_pexels_key" value="<?php echo esc_attr(get_option('beastpost_pexels_key')); ?>" style="width:300px;" /></td>
+                    </tr>
+                </table>
+                <?php submit_button(); ?>
+            </form>
+        </div>
+        <?php
+    }
+
+    // Register settings.
+    public function register_settings() {
+        register_setting('beastpost_settings_group', 'beastpost_openai_key');
+        register_setting('beastpost_settings_group', 'beastpost_pexels_key');
     }
 }
 
