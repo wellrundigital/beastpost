@@ -26,6 +26,9 @@ class BeastPostPlugin {
         // Add settings page and register settings.
         add_action('admin_menu', array($this, 'register_settings_page'));
         add_action('admin_init', array($this, 'register_settings'));
+
+        // Add settings link to plugins page
+        add_filter('plugin_action_links_' . plugin_basename(__FILE__), array($this, 'beastpost_add_settings_link'));
     }
 
     // Add the BeastPost meta box to the sidebar.
@@ -45,19 +48,23 @@ class BeastPostPlugin {
         // Retrieve stored API keys.
         $openai_key = get_option('beastpost_openai_key');
         $pexels_key = get_option('beastpost_pexels_key');
+        
+        // Get last 4 characters of keys if they exist
+        $openai_last_four = $openai_key ? ' (...' . substr($openai_key, -4) . ')' : '';
+        $pexels_last_four = $pexels_key ? ' (...' . substr($pexels_key, -4) . ')' : '';
         ?>
         <div id="beastpost-container">
             <p>
                 <!-- OpenAI API key indicator with pencil icon -->
                 <span style="display:inline-block; padding:5px; border-radius:3px; background-color:<?php echo ($openai_key ? '#4CAF50' : '#F44336'); ?>; color:#fff;">
-                    <?php echo ($openai_key ? 'OpenAI API key set' : 'OpenAI API key missing'); ?>
+                    <?php echo ($openai_key ? 'OpenAI API key set' . $openai_last_four : 'OpenAI API key missing'); ?>
                 </span>
                 <a href="#" class="beastpost-edit-key" data-key-type="openai" title="Edit API key" style="margin-left:5px;">&#9998;</a>
             </p>
             <p>
                 <!-- Pexels API key indicator with pencil icon -->
                 <span style="display:inline-block; padding:5px; border-radius:3px; background-color:<?php echo ($pexels_key ? '#4CAF50' : '#F44336'); ?>; color:#fff;">
-                    <?php echo ($pexels_key ? 'Pexels API key set' : 'Pexels API key missing'); ?>
+                    <?php echo ($pexels_key ? 'Pexels API key set' . $pexels_last_four : 'Pexels API key missing'); ?>
                 </span>
                 <a href="#" class="beastpost-edit-key" data-key-type="pexels" title="Edit API key" style="margin-left:5px;">&#9998;</a>
             </p>
@@ -74,7 +81,7 @@ class BeastPostPlugin {
         <?php
     }
 
-    // Enqueue the plugin’s JavaScript file on post editor pages.
+    // Enqueue the plugin's JavaScript file on post editor pages.
     public function enqueue_scripts($hook) {
         if ( in_array($hook, array('post.php', 'post-new.php')) ) {
             wp_enqueue_script(
@@ -123,19 +130,60 @@ class BeastPostPlugin {
             wp_send_json_error('Both API keys must be set.');
         }
 
-        // Construct the prompt for the OpenAI API.
-        $prompt = "Write a clear, detailed and thorough blog post on the subject: " . $subject . ". Cover all corner cases, include official information and data, check official government resources for information where applicable and include citations. Format the output as a JSON object with keys: 'content' (the full WordPress formatted post content, including title, headers, lists, etc), 'seo_link' (an SEO optimized link), and 'image_description' (a three word description for a Pexels image).";
+        // Construct the system and user messages for the OpenAI API
+        $messages = array(
+            array(
+                'role' => 'user',
+                'content' => "Write a detailed blog post about: " . $subject . ". Follow these requirements:\n\n" .
+                            "1. Use Gutenberg blocks format for ALL content\n" .
+                            "2. Start with a title block: <!-- wp:post-title /-->\n" .
+                            "3. Follow with an intro paragraph block: <!-- wp:paragraph -->\n" .
+                            "4. Use appropriate blocks for all content (paragraphs, lists, quotes, etc)\n" .
+                            "5. Include proper HTML formatting within blocks (<strong>, <em>, etc)\n" .
+                            "6. Add citations where applicable\n\n" .
+                            "Format the response as a JSON object with these properties:\n" .
+                            "- title: The post title (without any HTML tags)\n" .
+                            "- content: The full WordPress Gutenberg blocks formatted blog post\n" .
+                            "- seo_link: An SEO optimized URL for the post\n" .
+                            "- image_description: A three-word description for a relevant featured image"
+            )
+        );
 
-        // Call the OpenAI API.
-        $openai_response = wp_remote_post('https://api.openai.com/v1/completions', array(
+        // Call the OpenAI API using the chat completions endpoint
+        $openai_response = wp_remote_post('https://api.openai.com/v1/chat/completions', array(
             'headers' => array(
                 'Content-Type'  => 'application/json',
                 'Authorization' => 'Bearer ' . $openai_key,
             ),
+            'timeout' => 60,
             'body' => json_encode(array(
-                'model'       => 'text-davinci-003',
-                'prompt'      => $prompt,
-                'max_tokens'  => 1024,
+                'model' => 'gpt-4o-2024-08-06',
+                'messages' => $messages,
+                'response_format' => array(
+                    "type" => "json_schema",
+                    "json_schema" => array(
+                        "name" => "blog_post",
+                        "schema" => array(
+                            "type" => "object",
+                            "properties" => array(
+                                "content" => array(
+                                    "type" => "string",
+                                    "description" => "The full WordPress formatted blog post content, including title, headers, lists, and text."
+                                ),
+                                "seo_link" => array(
+                                    "type" => "string",
+                                    "description" => "An SEO optimized URL link for the blog post."
+                                ),
+                                "image_description" => array(
+                                    "type" => "string",
+                                    "description" => "A three-word description suitable for a Pexels image related to the blog content."
+                                )
+                            ),
+                            "required" => array("content", "seo_link", "image_description"),
+                            "additionalProperties" => false
+                        )
+                    )
+                    )
             )),
         ));
 
@@ -144,10 +192,15 @@ class BeastPostPlugin {
         }
 
         $openai_body = json_decode(wp_remote_retrieve_body($openai_response), true);
-        if ( empty($openai_body) || !isset($openai_body['choices'][0]['text']) ) {
-            wp_send_json_error('Invalid response from OpenAI API.');
+        if ( empty($openai_body) || !isset($openai_body['choices'][0]['message']['content']) ) {
+            $error_message = 'Invalid response from OpenAI API. Full response: ' . wp_json_encode($openai_body);
+            if (isset($openai_body['error'])) {
+                $error_message .= "\nError details: " . wp_json_encode($openai_body['error']);
+            }
+            wp_send_json_error($error_message);
         }
-        $openai_text = trim($openai_body['choices'][0]['text']);
+        
+        $openai_text = trim($openai_body['choices'][0]['message']['content']);
 
         // Assume the response is a JSON object.
         $response_data = json_decode($openai_text, true);
@@ -199,7 +252,10 @@ class BeastPostPlugin {
 
         wp_send_json_success(array(
             'message'  => 'Post created successfully.',
-            'seo_link' => $seo_link
+            'title' => wp_strip_all_tags($response_data['title']),
+            'content' => $content,
+            'seo_link' => $seo_link,
+            'image_description' => $image_description
         ));
     }
 
@@ -244,6 +300,13 @@ class BeastPostPlugin {
     public function register_settings() {
         register_setting('beastpost_settings_group', 'beastpost_openai_key');
         register_setting('beastpost_settings_group', 'beastpost_pexels_key');
+    }
+
+    // Add settings link to plugins page
+    public function beastpost_add_settings_link($links) {
+        $settings_link = '<a href="' . admin_url('options-general.php?page=beastpost-settings') . '">' . __('Settings', 'beastpost') . '</a>';
+        array_unshift($links, $settings_link);
+        return $links;
     }
 }
 

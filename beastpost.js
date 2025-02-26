@@ -32,6 +32,15 @@ jQuery(document).ready(function ($) {
     link.click();
   }
 
+  // Function to download post content as a text file
+  function downloadPost(content) {
+    var blob = new Blob([content], { type: "text/plain" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "generated_post.txt";
+    link.click();
+  }
+
   // Update API key when the pencil icon is clicked.
   $(".beastpost-edit-key").on("click", function (e) {
     e.preventDefault();
@@ -67,11 +76,15 @@ jQuery(document).ready(function ($) {
     }
     var post_id = $("#post_ID").val();
 
-    // Show progress indicator.
+    // Show progress indicator and disable inputs
     if ($("#beastpost-progress").length === 0) {
       $("#beastpost-container").append(
-        '<div id="beastpost-progress" style="margin-top:10px; color: #0073aa;">Creating post, please wait...</div>'
+        '<div id="beastpost-progress" style="margin-top:10px; color: #0073aa;">' +
+          '<span class="spinner is-active" style="float:none; margin-right:10px;"></span>' +
+          "Creating post, please wait...</div>"
       );
+      $("#beastpost-create-button").prop("disabled", true);
+      $("#beastpost-input").prop("disabled", true);
     }
     $.post(
       beastpost.ajax_url,
@@ -83,17 +96,64 @@ jQuery(document).ready(function ($) {
       },
       function (response) {
         $("#beastpost-progress").remove();
+        $("#beastpost-create-button").prop("disabled", false);
+        $("#beastpost-input").prop("disabled", false);
         if (response.success) {
-          alert(response.data.message);
+          // Set the content in the editor
+          if (
+            typeof wp !== "undefined" &&
+            wp.data &&
+            wp.data.dispatch("core/editor")
+          ) {
+            // For Gutenberg editor
+            wp.data.dispatch("core/editor").editPost({
+              title: response.data.title,
+              content: response.data.content,
+            });
+            wp.data
+              .dispatch("core/editor")
+              .resetBlocks(wp.blocks.parse(response.data.content));
+          } else if (typeof tinyMCE !== "undefined" && tinyMCE.get("content")) {
+            // For Classic editor (TinyMCE)
+            tinyMCE.get("content").setContent(response.data.content);
+            tinyMCE.get("content").fire("change");
+          } else {
+            // Fallback for basic textarea
+            $("#content").val(response.data.content);
+            $("#content").trigger("change");
+          }
+
+          // Set the SEO link
           $("#editable-post-name").val(response.data.seo_link);
+
+          // Add download button
+          $("#beastpost-container").append(
+            '<button type="button" id="beastpost-download-post" class="button" style="margin-top:10px;">Download Post</button>'
+          );
+
+          // Add click handler for download button
+          $("#beastpost-download-post").on("click", function () {
+            downloadPost(response.data.content);
+          });
+
+          // Show success message
+          alert("Post created successfully!");
         } else {
-          showErrorModal(response.data);
+          const errorText =
+            `Error occurred at ${new Date().toISOString()}\n\n` +
+            `Error Details: ${response.data}\n\n` +
+            `Full Response:\n${JSON.stringify(response, null, 2)}`;
+          showErrorModal(errorText);
         }
       }
     ).fail(function (xhr, status, error) {
       $("#beastpost-progress").remove();
-      var fullError =
-        "AJAX error: " + status + "\n" + error + "\n" + xhr.responseText;
+      $("#beastpost-create-button").prop("disabled", false);
+      $("#beastpost-input").prop("disabled", false);
+      const fullError =
+        `Error occurred at ${new Date().toISOString()}\n\n` +
+        `AJAX error: ${status}\n${error}\n\n` +
+        `Full Response:\n${xhr.responseText}`;
       showErrorModal(fullError);
     });
   });
