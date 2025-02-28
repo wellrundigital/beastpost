@@ -67,94 +67,109 @@ jQuery(document).ready(function ($) {
   });
 
   // Handle the Create Post button click.
-  $("#beastpost-create-button").on("click", function (e) {
+  $("#beastpost-create-button").on("click", async function (e) {
     e.preventDefault();
-    var subject = $("#beastpost-input").val();
+    const subject = $("#beastpost-input").val();
     if (subject === "") {
       alert("Please enter a subject.");
       return;
     }
-    var post_id = $("#post_ID").val();
+    const post_id = $("#post_ID").val();
 
-    // Show progress indicator and disable inputs
+    // Show content generation progress
     if ($("#beastpost-progress").length === 0) {
       $("#beastpost-container").append(
         '<div id="beastpost-progress" style="margin-top:10px; color: #0073aa;">' +
           '<span class="spinner is-active" style="float:none; margin-right:10px;"></span>' +
-          "Creating post, please wait...</div>"
+          '<span id="beastpost-status">Generating post content...</span></div>'
       );
+    }
+
+    try {
+      // Disable inputs
       $("#beastpost-create-button").prop("disabled", true);
       $("#beastpost-input").prop("disabled", true);
-    }
-    $.post(
-      beastpost.ajax_url,
-      {
+
+      // First request: Get post content
+      const contentResponse = await $.post(beastpost.ajax_url, {
         action: "beastpost_create_post",
+        mode: "content",
         subject: subject,
         post_id: post_id,
         nonce: beastpost.nonce,
-      },
-      function (response) {
-        $("#beastpost-progress").remove();
-        $("#beastpost-create-button").prop("disabled", false);
-        $("#beastpost-input").prop("disabled", false);
-        if (response.success) {
-          // Set the content in the editor
-          if (
-            typeof wp !== "undefined" &&
-            wp.data &&
-            wp.data.dispatch("core/editor")
-          ) {
-            // For Gutenberg editor
-            wp.data.dispatch("core/editor").editPost({
-              title: response.data.title,
-              content: response.data.content,
-            });
-            wp.data
-              .dispatch("core/editor")
-              .resetBlocks(wp.blocks.parse(response.data.content));
-          } else if (typeof tinyMCE !== "undefined" && tinyMCE.get("content")) {
-            // For Classic editor (TinyMCE)
-            tinyMCE.get("content").setContent(response.data.content);
-            tinyMCE.get("content").fire("change");
-          } else {
-            // Fallback for basic textarea
-            $("#content").val(response.data.content);
-            $("#content").trigger("change");
-          }
+      });
 
-          // Set the SEO link
-          $("#editable-post-name").val(response.data.seo_link);
-
-          // Add download button
-          $("#beastpost-container").append(
-            '<button type="button" id="beastpost-download-post" class="button" style="margin-top:10px;">Download Post</button>'
-          );
-
-          // Add click handler for download button
-          $("#beastpost-download-post").on("click", function () {
-            downloadPost(response.data.content);
-          });
-
-          // Show success message
-          alert("Post created successfully!");
-        } else {
-          const errorText =
-            `Error occurred at ${new Date().toISOString()}\n\n` +
-            `Error Details: ${response.data}\n\n` +
-            `Full Response:\n${JSON.stringify(response, null, 2)}`;
-          showErrorModal(errorText);
-        }
+      if (!contentResponse.success) {
+        throw new Error(contentResponse.data);
       }
-    ).fail(function (xhr, status, error) {
+
+      // Update editor with content
+      if (
+        typeof wp !== "undefined" &&
+        wp.data &&
+        wp.data.dispatch("core/editor")
+      ) {
+        wp.data.dispatch("core/editor").editPost({
+          title: contentResponse.data.title,
+          content: contentResponse.data.content,
+        });
+        wp.data
+          .dispatch("core/editor")
+          .resetBlocks(wp.blocks.parse(contentResponse.data.content));
+      }
+
+      // Update SEO link
+      $("#editable-post-name").val(contentResponse.data.seo_link);
+
+      // Update progress status
+      $("#beastpost-status").text("Setting featured image...");
+
+      // Second request: Get and set featured image
+      const imageResponse = await $.post(beastpost.ajax_url, {
+        action: "beastpost_create_post",
+        mode: "image",
+        post_id: post_id,
+        image_description: contentResponse.data.image_description,
+        nonce: beastpost.nonce,
+      });
+
+      if (!imageResponse.success) {
+        throw new Error(imageResponse.data);
+      }
+
+      // Update featured image in Gutenberg editor
+      if (
+        typeof wp !== "undefined" &&
+        wp.data &&
+        wp.data.dispatch("core/editor")
+      ) {
+        wp.data.dispatch("core/editor").editPost({
+          featured_media: imageResponse.data.image_id,
+        });
+      }
+
+      // Add download button
+      $("#beastpost-container").append(
+        '<button type="button" id="beastpost-download-post" class="button" style="margin-top:10px;">Download Post</button>'
+      );
+
+      // Add click handler for download button
+      $("#beastpost-download-post").on("click", function () {
+        downloadPost(contentResponse.data.content);
+      });
+
+      // Show success message
+      alert("Post created successfully!");
+    } catch (error) {
+      const errorText =
+        `Error occurred at ${new Date().toISOString()}\n\n` +
+        `Error Details: ${error.message}\n\n`;
+      showErrorModal(errorText);
+    } finally {
+      // Clean up
       $("#beastpost-progress").remove();
       $("#beastpost-create-button").prop("disabled", false);
       $("#beastpost-input").prop("disabled", false);
-      const fullError =
-        `Error occurred at ${new Date().toISOString()}\n\n` +
-        `AJAX error: ${status}\n${error}\n\n` +
-        `Full Response:\n${xhr.responseText}`;
-      showErrorModal(fullError);
-    });
+    }
   });
 });

@@ -121,142 +121,158 @@ class BeastPostPlugin {
 
         $post_id = intval($_POST['post_id']);
         $subject = sanitize_textarea_field($_POST['subject']);
+        $mode = sanitize_text_field($_POST['mode']); // 'content' or 'image'
 
-        // Retrieve saved API keys.
+        // Retrieve saved API keys
         $openai_key = get_option('beastpost_openai_key');
         $pexels_key = get_option('beastpost_pexels_key');
 
-        if ( empty($openai_key) || empty($pexels_key) ) {
-            wp_send_json_error('Both API keys must be set.');
-        }
+        if ($mode === 'content') {
+            if (empty($openai_key)) {
+                wp_send_json_error('OpenAI API key must be set.');
+            }
 
-        // Construct the system and user messages for the OpenAI API
-        $messages = array(
-            array(
-                'role' => 'user',
-                'content' => "Write a detailed blog post about: " . $subject . ". Follow these requirements:\n\n" .
-                            "1. Use Gutenberg blocks format for ALL content\n" .
-                            "2. Start with a title block: <!-- wp:post-title /-->\n" .
-                            "3. Follow with an intro paragraph block: <!-- wp:paragraph -->\n" .
-                            "4. Use appropriate blocks for all content (paragraphs, lists, quotes, etc)\n" .
-                            "5. Include proper HTML formatting within blocks (<strong>, <em>, etc)\n" .
-                            "6. Add citations where applicable\n\n" .
-                            "Format the response as a JSON object with these properties:\n" .
-                            "- title: The post title (without any HTML tags)\n" .
-                            "- content: The full WordPress Gutenberg blocks formatted blog post\n" .
-                            "- seo_link: An SEO optimized URL for the post\n" .
-                            "- image_description: A three-word description for a relevant featured image"
-            )
-        );
+            // Construct the system and user messages for the OpenAI API
+            $messages = array(
+                array(
+                    'role' => 'user',
+                    'content' => "Write a detailed blog post about: " . $subject . ". Follow these requirements:\n\n" .
+                                "1. Use Gutenberg blocks format for ALL content\n" .
+                                "2. Start with a title block: <!-- wp:post-title /-->\n" .
+                                "3. Follow with an intro paragraph block: <!-- wp:paragraph -->\n" .
+                                "4. Use appropriate blocks for all content (paragraphs, lists, quotes, etc)\n" .
+                                "5. Include proper HTML formatting within blocks (<strong>, <em>, etc)\n" .
+                                "6. Add citations where applicable\n\n" .
+                                "Format the response as a JSON object with these properties:\n" .
+                                "- title: The post title (without any HTML tags)\n" .
+                                "- content: The full WordPress Gutenberg blocks formatted blog post\n" .
+                                "- seo_link: An SEO optimized URL for the post\n" .
+                                "- image_description: A three-word description for a relevant featured image"
+                )
+            );
 
-        // Call the OpenAI API using the chat completions endpoint
-        $openai_response = wp_remote_post('https://api.openai.com/v1/chat/completions', array(
-            'headers' => array(
-                'Content-Type'  => 'application/json',
-                'Authorization' => 'Bearer ' . $openai_key,
-            ),
-            'timeout' => 60,
-            'body' => json_encode(array(
-                'model' => 'gpt-4o-2024-08-06',
-                'messages' => $messages,
-                'response_format' => array(
-                    "type" => "json_schema",
-                    "json_schema" => array(
-                        "name" => "blog_post",
-                        "schema" => array(
-                            "type" => "object",
-                            "properties" => array(
-                                "content" => array(
-                                    "type" => "string",
-                                    "description" => "The full WordPress formatted blog post content, including title, headers, lists, and text."
+            // Call the OpenAI API using the chat completions endpoint
+            $openai_response = wp_remote_post('https://api.openai.com/v1/chat/completions', array(
+                'headers' => array(
+                    'Content-Type'  => 'application/json',
+                    'Authorization' => 'Bearer ' . $openai_key,
+                ),
+                'timeout' => 60,
+                'body' => json_encode(array(
+                    'model' => 'gpt-4o-2024-08-06',
+                    'messages' => $messages,
+                    'response_format' => array(
+                        "type" => "json_schema",
+                        "json_schema" => array(
+                            "name" => "blog_post",
+                            "schema" => array(
+                                "type" => "object",
+                                "properties" => array(
+                                    "content" => array(
+                                        "type" => "string",
+                                        "description" => "The full WordPress formatted blog post content, including title, headers, lists, and text."
+                                    ),
+                                    "seo_link" => array(
+                                        "type" => "string",
+                                        "description" => "An SEO optimized URL link for the blog post."
+                                    ),
+                                    "image_description" => array(
+                                        "type" => "string",
+                                        "description" => "A three-word description suitable for a Pexels image related to the blog content."
+                                    )
                                 ),
-                                "seo_link" => array(
-                                    "type" => "string",
-                                    "description" => "An SEO optimized URL link for the blog post."
-                                ),
-                                "image_description" => array(
-                                    "type" => "string",
-                                    "description" => "A three-word description suitable for a Pexels image related to the blog content."
-                                )
-                            ),
-                            "required" => array("content", "seo_link", "image_description"),
-                            "additionalProperties" => false
+                                "required" => array("content", "seo_link", "image_description"),
+                                "additionalProperties" => false
+                            )
                         )
                     )
-                    )
-            )),
-        ));
+                )),
+            ));
 
-        if ( is_wp_error($openai_response) ) {
-            wp_send_json_error('Error contacting OpenAI API: ' . $openai_response->get_error_message());
-        }
-
-        $openai_body = json_decode(wp_remote_retrieve_body($openai_response), true);
-        if ( empty($openai_body) || !isset($openai_body['choices'][0]['message']['content']) ) {
-            $error_message = 'Invalid response from OpenAI API. Full response: ' . wp_json_encode($openai_body);
-            if (isset($openai_body['error'])) {
-                $error_message .= "\nError details: " . wp_json_encode($openai_body['error']);
+            if ( is_wp_error($openai_response) ) {
+                wp_send_json_error('Error contacting OpenAI API: ' . $openai_response->get_error_message());
             }
-            wp_send_json_error($error_message);
+
+            $openai_body = json_decode(wp_remote_retrieve_body($openai_response), true);
+            if ( empty($openai_body) || !isset($openai_body['choices'][0]['message']['content']) ) {
+                $error_message = 'Invalid response from OpenAI API. Full response: ' . wp_json_encode($openai_body);
+                if (isset($openai_body['error'])) {
+                    $error_message .= "\nError details: " . wp_json_encode($openai_body['error']);
+                }
+                wp_send_json_error($error_message);
+            }
+            
+            $openai_text = trim($openai_body['choices'][0]['message']['content']);
+
+            // Assume the response is a JSON object.
+            $response_data = json_decode($openai_text, true);
+            if ( ! $response_data || !isset($response_data['content'], $response_data['seo_link'], $response_data['image_description']) ) {
+                wp_send_json_error('Response format error. Full response: ' . print_r($openai_body, true));
+            }
+
+            $content           = $response_data['content'];
+            $seo_link          = $response_data['seo_link'];
+            $image_description = $response_data['image_description'];
+
+            // Update the post content and the post slug (using the SEO link).
+            wp_update_post(array(
+                'ID'           => $post_id,
+                'post_content' => $content,
+                'post_name'    => sanitize_title($seo_link)
+            ));
+
+            wp_send_json_success(array(
+                'message'  => 'Post content created successfully.',
+                'title' => wp_strip_all_tags($response_data['title']),
+                'content' => $content,
+                'seo_link' => $seo_link,
+                'image_description' => $image_description
+            ));
+
+        } elseif ($mode === 'image') {
+            if (empty($pexels_key)) {
+                wp_send_json_error('Pexels API key must be set.');
+            }
+
+            $image_description = sanitize_text_field($_POST['image_description']);
+
+            // Query the Pexels API for an image
+            $pexels_response = wp_remote_get('https://api.pexels.com/v1/search?query=' . urlencode($image_description) . '&per_page=1', array(
+                'headers' => array(
+                    'Authorization' => $pexels_key,
+                ),
+            ));
+
+            if ( is_wp_error($pexels_response) ) {
+                wp_send_json_error('Error contacting Pexels API: ' . $pexels_response->get_error_message());
+            }
+
+            $pexels_body = json_decode(wp_remote_retrieve_body($pexels_response), true);
+            if ( empty($pexels_body) || !isset($pexels_body['photos'][0]) ) {
+                wp_send_json_error('No image found from Pexels.');
+            }
+
+            $photo     = $pexels_body['photos'][0];
+            $image_url = $photo['src']['large']; // Use the small size image.
+
+            // Include required WordPress files for handling media.
+            require_once(ABSPATH . 'wp-admin/includes/image.php');
+            require_once(ABSPATH . 'wp-admin/includes/file.php');
+            require_once(ABSPATH . 'wp-admin/includes/media.php');
+
+            // Download the image and attach it to the post.
+            $featured_image_id = media_sideload_image($image_url, $post_id, null, 'id');
+            if ( is_wp_error($featured_image_id) ) {
+                wp_send_json_error('Error setting featured image: ' . $featured_image_id->get_error_message());
+            }
+            set_post_thumbnail($post_id, $featured_image_id);
+
+            wp_send_json_success(array(
+                'message' => 'Featured image set successfully.',
+                'image_id' => $featured_image_id,
+                'image_url' => wp_get_attachment_url($featured_image_id)
+            ));
         }
-        
-        $openai_text = trim($openai_body['choices'][0]['message']['content']);
-
-        // Assume the response is a JSON object.
-        $response_data = json_decode($openai_text, true);
-        if ( ! $response_data || !isset($response_data['content'], $response_data['seo_link'], $response_data['image_description']) ) {
-            wp_send_json_error('Response format error. Full response: ' . print_r($openai_body, true));
-        }
-
-        $content           = $response_data['content'];
-        $seo_link          = $response_data['seo_link'];
-        $image_description = $response_data['image_description'];
-
-        // Update the post content and the post slug (using the SEO link).
-        wp_update_post(array(
-            'ID'           => $post_id,
-            'post_content' => $content,
-            'post_name'    => sanitize_title($seo_link)
-        ));
-
-        // Query the Pexels API for an image.
-        $pexels_response = wp_remote_get('https://api.pexels.com/v1/search?query=' . urlencode($image_description) . '&per_page=1', array(
-            'headers' => array(
-                'Authorization' => $pexels_key,
-            ),
-        ));
-
-        if ( is_wp_error($pexels_response) ) {
-            wp_send_json_error('Error contacting Pexels API: ' . $pexels_response->get_error_message());
-        }
-
-        $pexels_body = json_decode(wp_remote_retrieve_body($pexels_response), true);
-        if ( empty($pexels_body) || !isset($pexels_body['photos'][0]) ) {
-            wp_send_json_error('No image found from Pexels.');
-        }
-
-        $photo     = $pexels_body['photos'][0];
-        $image_url = $photo['src']['small']; // Use the small size image.
-
-        // Include required WordPress files for handling media.
-        require_once(ABSPATH . 'wp-admin/includes/image.php');
-        require_once(ABSPATH . 'wp-admin/includes/file.php');
-        require_once(ABSPATH . 'wp-admin/includes/media.php');
-
-        // Download the image and attach it to the post.
-        $featured_image_id = media_sideload_image($image_url, $post_id, null, 'id');
-        if ( is_wp_error($featured_image_id) ) {
-            wp_send_json_error('Error setting featured image: ' . $featured_image_id->get_error_message());
-        }
-        set_post_thumbnail($post_id, $featured_image_id);
-
-        wp_send_json_success(array(
-            'message'  => 'Post created successfully.',
-            'title' => wp_strip_all_tags($response_data['title']),
-            'content' => $content,
-            'seo_link' => $seo_link,
-            'image_description' => $image_description
-        ));
     }
 
     // Register the plugin settings page.
