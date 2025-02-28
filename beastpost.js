@@ -71,7 +71,7 @@ jQuery(document).ready(function ($) {
     e.preventDefault();
     const subject = $("#beastpost-input").val();
     if (subject === "") {
-      alert("Please enter a subject.");
+      alert("Please enter a topic for the post.");
       return;
     }
     const post_id = $("#post_ID").val();
