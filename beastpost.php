@@ -1,9 +1,12 @@
 <?php
 /*
 Plugin Name: BeastPost
-Description: Uses OpenAI and Pexels APIs to generate a blog post from a subject input. Also provides a settings page for updating API keys.
+Description: AI-powered blog post generator using OpenAI and Pexels APIs
 Version: 1.2
 Author: Wellrundigital | wellrundigital.com
+License: GPL v2
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+Text Domain: beastpost
 */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -50,8 +53,8 @@ class BeastPostPlugin {
         $pexels_key = get_option('beastpost_pexels_key');
         
         // Get last 4 characters of keys if they exist
-        $openai_last_four = $openai_key ? ' (...' . substr($openai_key, -4) . ')' : '';
-        $pexels_last_four = $pexels_key ? ' (...' . substr($pexels_key, -4) . ')' : '';
+        $openai_last_four = $openai_key ? ' (...' . esc_html(substr($openai_key, -4)) . ')' : '';
+        $pexels_last_four = $pexels_key ? ' (...' . esc_html(substr($pexels_key, -4)) . ')' : '';
         ?>
         <div id="beastpost-container">
             <p>
@@ -107,8 +110,12 @@ class BeastPostPlugin {
             wp_send_json_error('Unauthorized access');
         }
 
-        $key_type  = sanitize_text_field($_POST['key_type']);
-        $key_value = sanitize_text_field($_POST['key_value']);
+        if (!isset($_POST['key_type']) || !isset($_POST['key_value'])) {
+            wp_send_json_error('Missing required parameters');
+        }
+
+        $key_type  = sanitize_text_field(wp_unslash($_POST['key_type']));
+        $key_value = sanitize_text_field(wp_unslash($_POST['key_value']));
 
         if ( $key_type === 'openai' ) {
             update_option('beastpost_openai_key', $key_value);
@@ -124,9 +131,14 @@ class BeastPostPlugin {
     public function ajax_create_post() {
         check_ajax_referer('beastpost_nonce', 'nonce');
 
-        $post_id = intval($_POST['post_id']);
-        $subject = sanitize_textarea_field($_POST['subject']);
-        $mode = sanitize_text_field($_POST['mode']); // 'content' or 'image'
+        // Validate required parameters
+        if (!isset($_POST['post_id']) || !isset($_POST['subject']) || !isset($_POST['mode'])) {
+            wp_send_json_error('Missing required parameters');
+        }
+
+        $post_id = intval(wp_unslash($_POST['post_id']));
+        $subject = sanitize_textarea_field(wp_unslash($_POST['subject']));
+        $mode = sanitize_text_field(wp_unslash($_POST['mode'])); // 'content' or 'image'
 
         // Retrieve saved API keys
         $openai_key = get_option('beastpost_openai_key');
@@ -250,7 +262,11 @@ class BeastPostPlugin {
                 wp_send_json_error('Pexels API key must be set.');
             }
 
-            $image_description = sanitize_text_field($_POST['image_description']);
+            if (!isset($_POST['image_description'])) {
+                wp_send_json_error('Missing image description');
+            }
+
+            $image_description = sanitize_text_field(wp_unslash($_POST['image_description']));
 
             // Query the Pexels API for an image
             $pexels_response = wp_remote_get('https://api.pexels.com/v1/search?query=' . urlencode($image_description) . '&per_page=1', array(
@@ -330,8 +346,22 @@ class BeastPostPlugin {
 
     // Register settings.
     public function register_settings() {
-        register_setting('beastpost_settings_group', 'beastpost_openai_key');
-        register_setting('beastpost_settings_group', 'beastpost_pexels_key');
+        register_setting(
+            'beastpost_settings_group',
+            'beastpost_openai_key',
+            array(
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_text_field'
+            )
+        );
+        register_setting(
+            'beastpost_settings_group',
+            'beastpost_pexels_key',
+            array(
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_text_field'
+            )
+        );
     }
 
     // Add settings link to plugins page
