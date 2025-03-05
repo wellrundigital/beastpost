@@ -111,7 +111,7 @@ class BeastPostPlugin {
         }
 
         if (!isset($_POST['key_type']) || !isset($_POST['key_value'])) {
-            wp_send_json_error('Missing required parameters');
+            wp_send_json_error('Missing key_type or key_value parameters');
         }
 
         $key_type  = sanitize_text_field(wp_unslash($_POST['key_type']));
@@ -131,14 +131,45 @@ class BeastPostPlugin {
     public function ajax_create_post() {
         check_ajax_referer('beastpost_nonce', 'nonce');
 
-        // Validate required parameters
-        if (!isset($_POST['post_id']) || !isset($_POST['subject']) || !isset($_POST['mode'])) {
-            wp_send_json_error('Missing required parameters');
+        // Get post ID from POST data
+        if (!isset($_POST['post_id'])) {
+            wp_send_json_error('Missing post_id parameter');
+            return;
+        }
+        $post_id = intval($_POST['post_id']);
+        if (!$post_id) {
+            wp_send_json_error('Invalid post_id');
+            return;
         }
 
-        $post_id = intval(wp_unslash($_POST['post_id']));
-        $subject = sanitize_textarea_field(wp_unslash($_POST['subject']));
-        $mode = sanitize_text_field(wp_unslash($_POST['mode'])); // 'content' or 'image'
+        // Check mode parameter first as it determines other required parameters
+        if (!isset($_POST['mode'])) {
+            wp_send_json_error('Missing mode parameter');
+            return;
+        }
+
+        $mode = sanitize_text_field(wp_unslash($_POST['mode']));
+
+        // Validate mode value
+        if (!in_array($mode, array('content', 'image'))) {
+            wp_send_json_error('Invalid mode parameter. Mode must be either "content" or "image".');
+            return;
+        }
+
+        // Validate parameters based on mode
+        if ($mode === 'content') {
+            if (!isset($_POST['subject'])) {
+                wp_send_json_error('Missing subject parameter');
+                return;
+            }
+            $subject = sanitize_textarea_field(wp_unslash($_POST['subject']));
+        } else { // mode === 'image'
+            if (!isset($_POST['image_description'])) {
+                wp_send_json_error('Missing image_description parameter');
+                return;
+            }
+            $image_description = sanitize_text_field(wp_unslash($_POST['image_description']));
+        }
 
         // Retrieve saved API keys
         $openai_key = get_option('beastpost_openai_key');
@@ -153,18 +184,28 @@ class BeastPostPlugin {
             $messages = array(
                 array(
                     'role' => 'user',
-                    'content' => "Write a detailed blog post about: " . $subject . ". Follow these requirements:\n\n" .
-                                "1. Use Gutenberg blocks format for ALL content\n" .
-                                "2. Start with a title block: <!-- wp:post-title /-->\n" .
-                                "3. Follow with an intro paragraph block: <!-- wp:paragraph -->\n" .
-                                "4. Use appropriate blocks for all content (paragraphs, lists, quotes, etc)\n" .
-                                "5. Include proper HTML formatting within blocks (<strong>, <em>, etc)\n" .
-                                "6. Add citations where applicable\n\n" .
-                                "Format the response as a JSON object with these properties:\n" .
-                                "- title: The post title (without any HTML tags)\n" .
-                                "- content: The full WordPress Gutenberg blocks formatted blog post\n" .
-                                "- seo_link: An SEO optimized URL for the post\n" .
-                                "- image_description: A three-word description for a relevant featured image"
+                    'content' => "Write an in-depth, engaging blog post about: " . $subject . " using WordPress Gutenberg blocks throughout. Follow these requirements meticulously:\n\n" .
+                                "1. Begin with a title block:\n" .
+                                "<!-- wp:post-title /-->\n\n" .
+                                "2. Immediately follow with an introductory paragraph block:\n" .
+                                "<!-- wp:paragraph -->\n" .
+                                "[Write your introduction here]\n" .
+                                "<!-- /wp:paragraph -->\n\n" .
+                                "3. Use appropriate Gutenberg blocks for each section of the post (paragraphs, headings, lists, quotes, etc.). For headings, use the following exact format:\n\n" .
+                                "<!-- wp:heading -->\n" .
+                                "<h2 class=\"wp-block-heading\">[Heading Text Here]</h2>\n" .
+                                "<!-- /wp:heading -->\n\n" .
+                                "4. Include multiple subheadings (<!-- wp:heading -->) to structure the blog post clearly.\n\n" .
+                                "5. Incorporate relevant statistics, examples, anecdotes, or storytelling elements to keep the content rich, insightful, and interesting.\n\n" .
+                                "6. Use proper HTML formatting within blocks (e.g., <strong>, <em>) for emphasis as needed.\n\n" .
+                                "7. Include citations or references (within paragraph blocks) when citing facts, studies, or external sources.\n\n" .
+                                "8. Conclude the post with a final paragraph block (<!-- wp:paragraph -->) that wraps up your discussion.\n\n" .
+                                "9. Format your entire response as a valid JSON object with the following properties:\n" .
+                                "   - \"title\": The post title (without HTML tags)\n" .
+                                "   - \"content\": The full WordPress Gutenberg blocks-formatted blog post\n" .
+                                "   - \"seo_link\": A concise, SEO-friendly URL string (e.g., a hyphenated version of the topic)\n" .
+                                "   - \"image_description\": A concise, three-word description for a relevant featured image\n\n" .
+                                "Ensure all text and headings are enclosed in properly formed WordPress Gutenberg blocks, and that your post is both comprehensive and engaging."
                 )
             );
 

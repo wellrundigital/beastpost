@@ -1,11 +1,11 @@
 === BeastPost ===
 Contributors: wellrundigital
-Tags: openai, gpt, pexels, ai, content generation, blog post, seo
+Tags: openai, gpt, pexels, ai, content generation
 Requires at least: 5.8
-Tested up to: 6.4
+Tested up to: 6.7.2
 Requires PHP: 7.4
 Stable tag: 1.2
-License: GPLv2
+License: GPL v2
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 AI-powered blog post generator using OpenAI and Pexels APIs. Create engaging content with automatic image selection and SEO optimization.

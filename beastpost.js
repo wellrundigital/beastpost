@@ -75,6 +75,7 @@ jQuery(document).ready(function ($) {
       return;
     }
     const post_id = $("#post_ID").val();
+    console.log("Post ID:", post_id); // Debug log
 
     // Show content generation progress
     if ($("#beastpost-progress").length === 0) {
